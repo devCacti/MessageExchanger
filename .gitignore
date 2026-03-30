@@ -1,0 +1,12 @@
+*.db
+*.db-shm
+*.v2
+*.vsidx
+*.db-wal
+.vs/MessageExchanger/v17/.suo
+/.vs
+*.cache
+/MessageExchanger.Client/obj
+/MessageExchanger.Server/obj
+/MessageExchanger.Shared/obj
+/MessageExchanger.Shared/bin
