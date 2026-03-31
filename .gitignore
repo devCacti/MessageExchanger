@@ -12,3 +12,5 @@
 /MessageExchanger.Shared/bin
 /MessageExchanger.Server/bin
 /MessageExchanger.Client/bin
+/MessageExchanger.TestClient/bin
+/MessageExchanger.TestClient/obj

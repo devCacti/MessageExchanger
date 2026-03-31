@@ -101,8 +101,8 @@ namespace MessageExchanger.Server.Services
     public class ClientSession
     {
         public RSAParameters ClientPublicKey { get; set; }
-        public byte[] SymmetricKey { get; set; }
+        public byte[] SymmetricKey { get; set; } = Array.Empty<byte>();
         public bool Authenticated { get; set; }
-        public string Username { get; set; }
+        public string Username { get; set; } = string.Empty;
     }
 }

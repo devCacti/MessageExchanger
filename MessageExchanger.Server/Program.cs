@@ -6,7 +6,7 @@ using Microsoft.Extensions.Configuration;
 using MessageExchanger.Server.Data;
 using System.Security.Cryptography;
 using MessageExchanger.Server.Services;
-using MessageExchanger.Server.Utils;
+using MessageExchanger.Shared.Utils;
 
 namespace MessageExchanger.Server
 {
@@ -60,6 +60,10 @@ namespace MessageExchanger.Server
         {
             // 1. Extract client public key
             byte[] keyBytes = protocol.GetData();
+
+            Console.WriteLine($"Received PUBLIC_KEY bytes: {keyBytes.Length}");
+            Console.WriteLine(BitConverter.ToString(keyBytes));
+
             RSAParameters clientKey = RSAKeyConverter.FromByteArray(keyBytes);
 
             _auth.StoreClientPublicKey(client, clientKey);
