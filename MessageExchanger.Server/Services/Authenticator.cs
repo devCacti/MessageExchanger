@@ -1,9 +1,10 @@
 ﻿using System.Security.Cryptography;
-using System.Text;
 using MessageExchanger.Server.Data;
+using MessageExchanger.Server.Data.Entities;
 using MessageExchanger.Shared.DTOs;
 using System.Text.Json;
 using System.Net.Sockets;
+using MessageExchanger.Server.Utils;
 
 namespace MessageExchanger.Server.Services
 {
@@ -76,15 +77,60 @@ namespace MessageExchanger.Server.Services
             return JsonSerializer.Deserialize<LoginDTO>(plainBytes)!;
         }
 
+        public RegisterDTO DecryptRegisterDTO(TcpClient client, byte[] encryptedData)
+        {
+            var key = _sessions[client].SymmetricKey;
+
+            using var aes = Aes.Create();
+            aes.Key = key;
+            aes.IV = encryptedData.Take(16).ToArray();
+
+            using var decryptor = aes.CreateDecryptor();
+            var cipher = encryptedData.Skip(16).ToArray();
+            var plainBytes = decryptor.TransformFinalBlock(cipher, 0, cipher.Length);
+
+            return JsonSerializer.Deserialize<RegisterDTO>(plainBytes)!;
+        }
+
+        public bool RegisterUser(RegisterDTO dto)
+        {
+            // 1. Check if username already exists
+            if (_db.Users.Any(u => u.UserName == dto.UserName))
+                return false;
+
+            // 2. Generate random salt
+            string salt = SecurityUtils.GenerateSalt(); // or implement below
+
+            // 3. Hash password + salt with MD5
+            string hash = SecurityUtils.Md5Hash(dto.Password + salt); // or implement below
+
+            // 4. Create user entity
+            var user = new User
+            {
+                UserName = dto.UserName,
+                Password = hash,
+                Salt = salt,
+                FirstName = dto.FirstName,
+                LastName = dto.LastName
+            };
+
+            // 5. Save to DB
+            _db.Users.Add(user);
+            _db.SaveChanges();
+
+            return true;
+        }
+
+
         public bool ValidateCredentials(LoginDTO dto)
         {
             var user = _db.Users.FirstOrDefault(u => u.UserName == dto.UserName);
+            if (user == null) return false;
 
-            if (user == null)
-                return false;
-
-            return user.Password == dto.Password; // Phase 1 (plaintext)
+            string computedHash = SecurityUtils.Md5Hash(dto.Password + user.Salt);
+            return computedHash == user.Password;
         }
+
 
         public void MarkAuthenticated(TcpClient client, string username)
         {

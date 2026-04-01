@@ -61,8 +61,7 @@ namespace MessageExchanger.Server
             // 1. Extract client public key
             byte[] keyBytes = protocol.GetData();
 
-            Console.WriteLine($"Received PUBLIC_KEY bytes: {keyBytes.Length}");
-            Console.WriteLine(BitConverter.ToString(keyBytes));
+            Console.WriteLine($"[{DateTime.Now:T}] Received public key from client");
 
             RSAParameters clientKey = RSAKeyConverter.FromByteArray(keyBytes);
 
@@ -109,7 +108,31 @@ namespace MessageExchanger.Server
             }
         }
 
+        private static void HandleEncryptedRegister(TcpClient client, ProtocolSI protocol, NetworkStream stream)
+        {
+            byte[] encryptedPayload = protocol.GetData();
 
+            var registerDto = _auth.DecryptRegisterDTO(client, encryptedPayload);
+            
+            bool success = _auth.RegisterUser(registerDto);
+
+            var response = new ProtocolSI();
+            byte[] packet = response.Make(
+                ProtocolSICmdType.DATA,
+                success ? "REGISTER_OK" : "REGISTER_FAIL"
+            );
+
+            stream.Write(packet, 0, packet.Length);
+
+            if (success)
+            {
+                Console.WriteLine($"[{DateTime.Now:T}] User '{registerDto.UserName}' registered successfully");
+            }
+            else
+            {
+                Console.WriteLine($"[{DateTime.Now:T}] Failed registration attempt for '{registerDto.UserName}'");
+            }
+        }
 
         private static void HandleClient(TcpClient client)
         {
@@ -132,8 +155,14 @@ namespace MessageExchanger.Server
                             HandlePublicKey(client, protocol, stream);
                             break;
 
+                        // Login Section - expects encrypted LoginDTO
                         case ProtocolSICmdType.SYM_CIPHER_DATA:
                             HandleEncryptedLogin(client, protocol, stream);
+                            break;
+
+                        // Register Section - Will be implemented to allow for correct user registration in the database.
+                        case ProtocolSICmdType.USER_OPTION_1:
+                            HandleEncryptedRegister(client, protocol, stream);
                             break;
 
                         case ProtocolSICmdType.DATA:
