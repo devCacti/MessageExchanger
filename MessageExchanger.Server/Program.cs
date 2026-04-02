@@ -6,6 +6,7 @@ using Microsoft.Extensions.Configuration;
 using MessageExchanger.Server.Data;
 using System.Security.Cryptography;
 using MessageExchanger.Server.Services;
+using MessageExchanger.Server.Data.Entities;
 using MessageExchanger.Shared.Utils;
 using MessageExchanger.Shared.DTOs;
 using System.Text.Json;
@@ -27,6 +28,14 @@ namespace MessageExchanger.Server
                 .AddJsonFile("appsettings.json", optional: false)
                 .Build();
 
+            // Pull the key from the new section
+            // This master key should not be in *appsettings.json* in a production environment, but for the sake of this demo it will be saved here.
+            string masterKeyBase64 = config["SecuritySettings:DbMasterKey"]
+                ?? throw new Exception("Master Key missing from config!");
+
+            // Pass it to your service (you can make the service take the key in a 'Initialize' method)
+            EncryptionService.Initialize(masterKeyBase64);
+
             string connectionString = config.GetConnectionString("DefaultConnection") ?? throw new Exception("Connection string not found in configuration.");
 
             var options = new DbContextOptionsBuilder<AppDbContext>()
@@ -42,7 +51,7 @@ namespace MessageExchanger.Server
             TcpListener listener = new TcpListener(IPAddress.Any, PORT);
             listener.Start();
 
-            Console.WriteLine($"[{DateTime.Now:T}] Listening on port {PORT}");
+            Logger.Log($"Server started on port {PORT}. Waiting for clients...");
 
             while (true)
             {
@@ -51,7 +60,7 @@ namespace MessageExchanger.Server
                 lock (ConnectedClients)
                     ConnectedClients.Add(client);
 
-                Console.WriteLine($"[{DateTime.Now:T}] Client connected");
+                Logger.Log("Client Connected");
 
                 Thread t = new Thread(() => HandleClient(client));
                 t.Start();
@@ -63,7 +72,7 @@ namespace MessageExchanger.Server
             // 1. Extract client public key
             byte[] keyBytes = protocol.GetData();
 
-            Console.WriteLine($"[{DateTime.Now:T}] Received public key from client");
+            Logger.Log($"Received public key from client");
 
             RSAParameters clientKey = RSAKeyConverter.FromByteArray(keyBytes);
 
@@ -80,7 +89,7 @@ namespace MessageExchanger.Server
             byte[] packet = response.Make(ProtocolSICmdType.SECRET_KEY, encryptedKey);
             stream.Write(packet, 0, packet.Length);
 
-            Console.WriteLine($"[{DateTime.Now:T}] Sent encrypted symmetric key to client");
+            Logger.Log($"Sent encrypted symmetric key to client");
         }
 
         private static void HandleEncryptedLogin(TcpClient client, ProtocolSI protocol, NetworkStream stream)
@@ -102,11 +111,11 @@ namespace MessageExchanger.Server
             if (valid)
             {
                 _auth.MarkAuthenticated(client, loginDto.UserName);
-                Console.WriteLine($"[{DateTime.Now:T}] User '{loginDto.UserName}' authenticated");
+                Logger.Log($"User '{loginDto.UserName}' authenticated successfully");
             }
             else
             {
-                Console.WriteLine($"[{DateTime.Now:T}] Failed login attempt for '{loginDto.UserName}'");
+                Logger.Log($"Failed login attempt for '{loginDto.UserName}'");
             }
         }
 
@@ -128,11 +137,11 @@ namespace MessageExchanger.Server
 
             if (success)
             {
-                Console.WriteLine($"[{DateTime.Now:T}] User '{registerDto.UserName}' registered successfully");
+                Logger.Log($"User '{registerDto.UserName}' registered successfully");
             }
             else
             {
-                Console.WriteLine($"[{DateTime.Now:T}] Failed registration attempt for '{registerDto.UserName}'");
+                Logger.Log($"Failed registration attempt for '{registerDto.UserName}'");
             }
         }
 
@@ -157,37 +166,33 @@ namespace MessageExchanger.Server
                     switch (cmd)
                     {
                         case ProtocolSICmdType.PUBLIC_KEY:
+                            Logger.Log($"Received PUBLIC_KEY command from client. Processing key exchange...");
                             HandlePublicKey(client, protocol, stream);
                             break;
 
                         // Login Section - expects encrypted LoginDTO
                         case ProtocolSICmdType.SYM_CIPHER_DATA:
                             if (!_auth.IsAuthenticated(client))
+                            {
+                                Logger.Log($"Received encrypted data from unauthenticated client. Attempting to process as login...");
                                 HandleEncryptedLogin(client, protocol, stream);
+                            }
                             else
+                            {
+                                Logger.Log($"Received encrypted message from authenticated client. Attempting to process as direct message...");
                                 HandleDirectMessage(client, protocol);
+                            }
 
                             break;
 
                         // Register Section - Will be implemented to allow for correct user registration in the database.
                         case ProtocolSICmdType.USER_OPTION_1:
+                            Logger.Log($"Received registration request from client");
                             HandleEncryptedRegister(client, protocol, stream);
                             break;
 
-                        case ProtocolSICmdType.DATA:
-                            if (!_auth.IsAuthenticated(client))
-                            {
-                                Console.WriteLine("Unauthenticated client attempted to send DATA");
-                                break;
-                            }
-
-                            string msg = protocol.GetStringFromData();
-                            Console.WriteLine($"[{DateTime.Now:T}] {msg}");
-                            Broadcast(msg, client);
-                            break;
-
                         case ProtocolSICmdType.EOT:
-                            Console.WriteLine($"[{DateTime.Now:T}] Client disconnected");
+                            Logger.Log($"Client disconnected");
                             client.Close();
                             return;
                     }
@@ -196,7 +201,13 @@ namespace MessageExchanger.Server
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[{DateTime.Now:T}] Client error: {ex.Message}");
+                Logger.Log($"Client error: {ex.Message}");
+            }
+            finally
+            {
+                _auth.UnregisterClient(client);
+                lock (ConnectedClients) ConnectedClients.Remove(client);
+                client.Close();
             }
         }
 
@@ -208,8 +219,6 @@ namespace MessageExchanger.Server
                 //string base64Payload = protocol.GetStringFromData().Replace("\0", "");
                 byte[] rawBuffer = protocol.GetData();
 
-                Console.WriteLine($"[{DateTime.Now:T}] Received direct message payload (Base64): {rawBuffer}");
-
                 byte[] encryptedPayload = rawBuffer.Take(protocol.GetDataLength()).ToArray();
                 byte[] decryptedPayload = _auth.DecryptDataFromClient(senderClient, encryptedPayload);
                 var createDto = JsonSerializer.Deserialize<MessageCreateDTO>(decryptedPayload);
@@ -218,8 +227,36 @@ namespace MessageExchanger.Server
 
                 string senderUsername = _auth.GetAuthenticatedUsername(senderClient);
 
+                bool isSignatureValid = _auth.VerifySignature(senderClient, createDto.Contents, createDto.Signature);
+
+                if (!isSignatureValid)
+                {
+                    Logger.Log($"WARNING: Invalid signature from {senderUsername}. Message dropped.");
+                    return;
+                }
+
+                // --- 3. PERSISTENCE & ROUTING (Existing) ---
+                Logger.Log($"Signature verified for {senderUsername}. Processing...");
+
+                User senderUser = _db.Users.FirstOrDefault(u => u.UserName == senderUsername) ?? throw new Exception("Authenticated user not found in database");
+                User receiverUser = _db.Users.FirstOrDefault(u => u.UserName == createDto.ReceiverUserName) ?? throw new Exception("Receiver user not found in database");
+
+                Message msg = new Message
+                {
+                    Contents = EncryptionService.EncryptForDb(createDto.Contents), // Encrypts with master key
+                    Signature = createDto.Signature,
+                    Sender = senderUser,
+                    Receiver = receiverUser,
+                    SentAt = DateTime.UtcNow
+                };
+
+                // Save message on the database (No encryption for now)
+                Logger.Log($"Saving message from {senderUsername} to {createDto.ReceiverUserName} in database");
+                _db.Messages.Add(msg);
+                _db.SaveChanges();
+
                 // NOTE: Ensure your DTO property name matches here! (ReceiverUsername)
-                Console.WriteLine($"[{DateTime.Now:T}] Routing message from {senderUsername} to {createDto.ReceiverUserName}");
+                Logger.Log($"Routing message from {senderUsername} to {createDto.ReceiverUserName}");
 
                 var outDto = new MessageDTO
                 {
@@ -235,23 +272,20 @@ namespace MessageExchanger.Server
                 {
                     byte[] payloadForRecipient = _auth.EncryptDataForClient(recipientClient, JsonSerializer.SerializeToUtf8Bytes(outDto));
 
-                    // 2. Wrap the outgoing binary in a Base64 string as well
-                    string outboundBase64 = Convert.ToBase64String(payloadForRecipient);
-
                     var responseProtocol = new ProtocolSI();
-                    byte[] packet = responseProtocol.Make(ProtocolSICmdType.SYM_CIPHER_DATA, outboundBase64);
+                    byte[] packet = responseProtocol.Make(ProtocolSICmdType.SYM_CIPHER_DATA, payloadForRecipient);
 
                     recipientClient.GetStream().Write(packet, 0, packet.Length);
-                    Console.WriteLine($"[{DateTime.Now:T}] Message delivered to {createDto.ReceiverUserName}");
+                    Logger.Log($"Message delivered to {createDto.ReceiverUserName}");
                 }
                 else
                 {
-                    Console.WriteLine($"[{DateTime.Now:T}] User {createDto.ReceiverUserName} is offline.");
+                    Logger.Log($"User {createDto.ReceiverUserName} is not currently connected. Will not receive this message.");
                 }
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"[{DateTime.Now:T}] Error routing message: {ex.Message}");
+                Logger.Log($"Error handling direct message: {ex.Message}");
             }
         }
 

@@ -3,7 +3,8 @@
     public class Logger
     {
         // Will log messages to where the app is with the name as the date
-        private readonly string _logFilePath = $"{AppDomain.CurrentDomain.BaseDirectory}/{DateTime.Now:yyyy-MM-dd}.log.txt";
+        private static readonly string _logFilePath = $"{AppDomain.CurrentDomain.BaseDirectory}/{DateTime.Now:yyyy-MM-dd}.log.txt";
+        private static readonly object _lock = new object();
 
         public Logger()
         {
@@ -11,20 +12,24 @@
             Log("Server started.");
         }
 
-        public void Log(string message)
+        public static void Log(string message)
         {
-            try
-            {
-                // Ensure the directory exists
-                Directory.CreateDirectory(Path.GetDirectoryName(_logFilePath)!);
+            string logEntry = $"[{DateTime.Now:HH:mm:ss}] {message}";
 
-                // Append the message to the log file with a timestamp
-                File.AppendAllText(_logFilePath, $"{DateTime.Now:HH:mm:ss} -> {message}{Environment.NewLine}");
-            }
-            catch (Exception ex)
+            // Print to Console so you see it live
+            Console.WriteLine(logEntry);
+
+            // Write to File (lock ensures thread-safety if multiple clients log at once)
+            lock (_lock)
             {
-                // Handle any exceptions that occur during logging (e.g., file access issues)
-                Console.WriteLine($"Logging failed: {ex.Message}");
+                try
+                {
+                    File.AppendAllText(_logFilePath, logEntry + Environment.NewLine);
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"Critical Error writing to log file: {ex.Message}");
+                }
             }
         }
     }

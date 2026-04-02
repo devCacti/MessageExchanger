@@ -1,4 +1,5 @@
-﻿using System.Net.Sockets;
+﻿using System.IO;
+using System.Net.Sockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -119,31 +120,53 @@ namespace MessageExchanger.TestClient
 
                 while (true)
                 {
-                    Console.Write("\nTo User (or type 'exit'): ");
-                    string toUser = Console.ReadLine()!;
-                    if (toUser.ToLower() == "exit") break;
+                    Console.Clear();
+                    Console.WriteLine($"Logged in as: {username}");
+                    Console.WriteLine("-------------------------------------------");
+                    Console.Write("Enter username to chat with (or 'exit' to quit): ");
+                    string targetUser = Console.ReadLine()!;
 
-                    Console.Write("Message: ");
-                    string messageText = Console.ReadLine()!;
+                    if (targetUser.ToLower() == "exit") break;
+                    if (string.IsNullOrWhiteSpace(targetUser)) continue;
 
-                    var chatMessage = new MessageCreateDTO
-                    {
-                        ReceiverUserName = toUser,
-                        Contents = messageText,
-                        Signature = SignData(messageText) // Sign the plaintext
-                    };
-
-                    byte[] encryptedMsg = EncryptWithAes(JsonSerializer.SerializeToUtf8Bytes(chatMessage));
-
-                    // Temporary Packet (tPacket)
-                    var tPacket = new ProtocolSI().Make(ProtocolSICmdType.SYM_CIPHER_DATA, encryptedMsg);
-                    stream.Write(tPacket, 0, tPacket.Length);
+                    // 2. Enter the specific Chat Room
+                    RunChatRoom(stream, targetUser);
                 }
             }
 
             var eotPacket = protocol.Make(ProtocolSICmdType.EOT);
             stream.Write(eotPacket, 0, eotPacket.Length);
             client.Close();
+        }
+
+        static void RunChatRoom(NetworkStream stream, string targetUser)
+        {
+            Console.WriteLine($"\n>>> Chatting with {targetUser} <<<");
+            Console.WriteLine(">>> Type '/back' to change user <<<");
+            Console.WriteLine("-------------------------------------------");
+
+            while (true)
+            {
+                Console.Write("Me: ");
+                string messageText = Console.ReadLine()!;
+
+                if (string.IsNullOrWhiteSpace(messageText)) continue;
+                if (messageText.ToLower() == "/back") break;
+
+                var chatMessage = new MessageCreateDTO
+                {
+                    ReceiverUserName = targetUser,
+                    Contents = messageText,
+                    Signature = SignData(messageText)
+                };
+
+                byte[] jsonBytes = JsonSerializer.SerializeToUtf8Bytes(chatMessage);
+                byte[] encryptedMsg = EncryptWithAes(jsonBytes);
+
+                // Send using raw binary (No Base64!)
+                var tPacket = new ProtocolSI().Make(ProtocolSICmdType.SYM_CIPHER_DATA, encryptedMsg);
+                stream.Write(tPacket, 0, tPacket.Length);
+            }
         }
 
         static string SignData(string data)
@@ -164,36 +187,38 @@ namespace MessageExchanger.TestClient
             {
                 while (true)
                 {
+                    // 1. MUST use protocol.Read(stream) to update internal length
                     int bytes = stream.Read(protocol.Buffer, 0, protocol.Buffer.Length);
-                    if (bytes == 0) break;
+                    if (bytes <= 0) break;
 
-                    if (protocol.GetCmdType() == ProtocolSICmdType.SYM_CIPHER_DATA)
+                    // 2. Get the raw bytes and slice them precisely
+                    byte[] rawData = protocol.GetData();
+                    byte[] encryptedData = rawData.Take(protocol.GetDataLength()).ToArray();
+
+                    // 3. Decrypt
+                    byte[] decryptedBytes = DecryptWithAes(encryptedData);
+                    var cmd = protocol.GetCmdType();
+
+                    if (cmd == ProtocolSICmdType.SYM_CIPHER_DATA)
                     {
-                        // Read the Base64 string
-                        string base64Payload = protocol.GetStringFromData().TrimEnd('\0');
-
-                        // Convert back to binary
-                        byte[] encryptedData = Convert.FromBase64String(base64Payload);
-
-                        // Decrypt normally
-                        byte[] decryptedBytes = DecryptWithAes(encryptedData);
-
+                        // IT'S A LIVE MESSAGE - Append to bottom
                         var incomingMsg = JsonSerializer.Deserialize<MessageDTO>(decryptedBytes);
-
                         if (incomingMsg != null)
                         {
-                            Console.WriteLine($"\n\n[New Message from {incomingMsg.SenderUserName} at {incomingMsg.SentAt.ToLocalTime():t}]: {incomingMsg.Contents}");
-                            Console.Write("To User (or type 'exit'): ");
+                            // \r clears the current "Me: " line before printing the new message
+                            Console.Write($"\r[{incomingMsg.SentAt.ToLocalTime():HH:mm}] {incomingMsg.SenderUserName}: {incomingMsg.Contents}\nMe: ");
                         }
                     }
+
+                    Array.Clear(protocol.Buffer, 0, protocol.Buffer.Length);
                 }
             }
-            catch
+            catch (Exception ex)
             {
-                Console.WriteLine("\nDisconnected from server listening thread.");
+                // Don't let a decryption error kill the thread
+                Console.WriteLine($"\n[Listener Error]: {ex.Message}");
             }
         }
-
 
         static void GenerateRSAKeys()
         {
@@ -235,7 +260,6 @@ namespace MessageExchanger.TestClient
 
             return aes.IV.Concat(cipher).ToArray();
         }
-
 
         static string ReadHiddenPassword()
         {

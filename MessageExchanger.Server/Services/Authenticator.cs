@@ -5,6 +5,7 @@ using MessageExchanger.Shared.DTOs;
 using System.Text.Json;
 using System.Net.Sockets;
 using MessageExchanger.Server.Utils;
+using System.Text;
 
 namespace MessageExchanger.Server.Services
 {
@@ -24,6 +25,7 @@ namespace MessageExchanger.Server.Services
 
         // Per-client session storage
         private readonly Dictionary<TcpClient, ClientSession> _sessions = new();
+        private readonly Dictionary<string, TcpClient> _onlineUsers = new(StringComparer.OrdinalIgnoreCase);
 
         public void GenerateServerKeys()
         {
@@ -121,7 +123,6 @@ namespace MessageExchanger.Server.Services
             return true;
         }
 
-
         public bool ValidateCredentials(LoginDTO dto)
         {
             var user = _db.Users.FirstOrDefault(u => u.UserName == dto.UserName);
@@ -131,11 +132,40 @@ namespace MessageExchanger.Server.Services
             return computedHash == user.Password;
         }
 
+        public bool VerifySignature(TcpClient client, string contents, string signatureBase64)
+        {
+            // 1. Get the session for this specific client
+            if (!_sessions.TryGetValue(client, out var session))
+            {
+                return false;
+            }
+
+            try
+            {
+                // 2. Import the Public Key we got during the handshake
+                using var rsa = RSA.Create();
+                rsa.ImportParameters(session.ClientPublicKey);
+
+                // 3. Convert data to bytes
+                byte[] data = Encoding.UTF8.GetBytes(contents);
+                byte[] signature = Convert.FromBase64String(signatureBase64);
+
+                // 4. Verify using SHA256 (matching what your client uses to sign)
+                return rsa.VerifyData(data, signature, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[Signature Error]: {ex.Message}");
+                return false;
+            }
+        }
 
         public void MarkAuthenticated(TcpClient client, string username)
         {
+            string searchName = username.Replace("\0", "").Trim();
+
             _sessions[client].Authenticated = true;
-            _sessions[client].Username = username;
+            _sessions[client].Username = searchName;
         }
 
         public bool IsAuthenticated(TcpClient client)
@@ -174,10 +204,12 @@ namespace MessageExchanger.Server.Services
 
         public TcpClient? GetClientByUsername(string username)
         {
+            string searchName = username.Replace("\0", "").Trim();
+
             // Find the first session where the user is authenticated and the username matches
             var activeSession = _sessions.FirstOrDefault(s =>
                 s.Value.Authenticated &&
-                s.Value.Username.Equals(username, StringComparison.OrdinalIgnoreCase));
+                s.Value.Username.Equals(searchName, StringComparison.OrdinalIgnoreCase));
 
             // Return the dictionary Key (the TcpClient), or null if not found
             return activeSession.Key;
@@ -187,9 +219,28 @@ namespace MessageExchanger.Server.Services
         {
             if (_sessions.TryGetValue(client, out var session) && session.Authenticated)
             {
-                return session.Username;
+                return session.Username.Replace("\0", "").Trim();
             }
             return string.Empty;
+        }
+
+        public void UnregisterClient(TcpClient client)
+        {
+            // 1. Safety check for the input
+            if (client == null) return;
+
+            // 2. Safety check for the dictionaries
+            if (_sessions == null || _onlineUsers == null) return;
+
+            if (_sessions.TryGetValue(client, out var session))
+            {
+                // 3. session itself should not be null, but we check anyway
+                if (session != null && !string.IsNullOrEmpty(session.Username))
+                {
+                    _onlineUsers.Remove(session.Username);
+                }
+            }
+            _sessions.Remove(client);
         }
     }
 

@@ -5,8 +5,8 @@ namespace MessageExchanger.Shared.Utils
 {
     public class RsaPublicKey
     {
-        public byte[] Modulus { get; set; }
-        public byte[] Exponent { get; set; }
+        public byte[] Modulus { get; set; } = Array.Empty<byte>();
+        public byte[] Exponent { get; set; } = Array.Empty<byte>();
     }
 
     public static class RSAKeyConverter
@@ -15,8 +15,8 @@ namespace MessageExchanger.Shared.Utils
         {
             var key = new RsaPublicKey
             {
-                Modulus = parameters.Modulus,
-                Exponent = parameters.Exponent
+                Modulus = parameters.Modulus ?? Array.Empty<byte>(),
+                Exponent = parameters.Exponent ?? Array.Empty<byte>()
             };
 
             return JsonSerializer.SerializeToUtf8Bytes(key);
