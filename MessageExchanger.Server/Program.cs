@@ -7,6 +7,8 @@ using MessageExchanger.Server.Data;
 using System.Security.Cryptography;
 using MessageExchanger.Server.Services;
 using MessageExchanger.Shared.Utils;
+using MessageExchanger.Shared.DTOs;
+using System.Text.Json;
 
 namespace MessageExchanger.Server
 {
@@ -33,7 +35,7 @@ namespace MessageExchanger.Server
 
             _db = new AppDbContext(options);
             _auth = new Authenticator(_db);
-            _db.Database.EnsureCreated();
+            _db.Database.Migrate();
 
             PrintBanner(PORT);
 
@@ -144,6 +146,9 @@ namespace MessageExchanger.Server
             {
                 while (client.Connected)
                 {
+                    // Clears the buffer before each read to prevent leftover data from previous messages causing issues.
+                    Array.Clear(protocol.Buffer, 0, protocol.Buffer.Length);
+
                     int bytes = stream.Read(protocol.Buffer, 0, protocol.Buffer.Length);
                     if (bytes == 0) break;
 
@@ -157,7 +162,11 @@ namespace MessageExchanger.Server
 
                         // Login Section - expects encrypted LoginDTO
                         case ProtocolSICmdType.SYM_CIPHER_DATA:
-                            HandleEncryptedLogin(client, protocol, stream);
+                            if (!_auth.IsAuthenticated(client))
+                                HandleEncryptedLogin(client, protocol, stream);
+                            else
+                                HandleDirectMessage(client, protocol);
+
                             break;
 
                         // Register Section - Will be implemented to allow for correct user registration in the database.
@@ -191,6 +200,61 @@ namespace MessageExchanger.Server
             }
         }
 
+        private static void HandleDirectMessage(TcpClient senderClient, ProtocolSI protocol)
+        {
+            try
+            {
+                // 1. Read as a Base64 string instead of raw bytes to avoid buffer corruption
+                //string base64Payload = protocol.GetStringFromData().Replace("\0", "");
+                byte[] rawBuffer = protocol.GetData();
+
+                Console.WriteLine($"[{DateTime.Now:T}] Received direct message payload (Base64): {rawBuffer}");
+
+                byte[] encryptedPayload = rawBuffer.Take(protocol.GetDataLength()).ToArray();
+                byte[] decryptedPayload = _auth.DecryptDataFromClient(senderClient, encryptedPayload);
+                var createDto = JsonSerializer.Deserialize<MessageCreateDTO>(decryptedPayload);
+
+                if (createDto == null) return;
+
+                string senderUsername = _auth.GetAuthenticatedUsername(senderClient);
+
+                // NOTE: Ensure your DTO property name matches here! (ReceiverUsername)
+                Console.WriteLine($"[{DateTime.Now:T}] Routing message from {senderUsername} to {createDto.ReceiverUserName}");
+
+                var outDto = new MessageDTO
+                {
+                    SenderUserName = senderUsername,
+                    Contents = createDto.Contents,
+                    Signature = createDto.Signature,
+                    SentAt = DateTime.UtcNow
+                };
+
+                TcpClient? recipientClient = _auth.GetClientByUsername(createDto.ReceiverUserName);
+
+                if (recipientClient != null && recipientClient.Connected)
+                {
+                    byte[] payloadForRecipient = _auth.EncryptDataForClient(recipientClient, JsonSerializer.SerializeToUtf8Bytes(outDto));
+
+                    // 2. Wrap the outgoing binary in a Base64 string as well
+                    string outboundBase64 = Convert.ToBase64String(payloadForRecipient);
+
+                    var responseProtocol = new ProtocolSI();
+                    byte[] packet = responseProtocol.Make(ProtocolSICmdType.SYM_CIPHER_DATA, outboundBase64);
+
+                    recipientClient.GetStream().Write(packet, 0, packet.Length);
+                    Console.WriteLine($"[{DateTime.Now:T}] Message delivered to {createDto.ReceiverUserName}");
+                }
+                else
+                {
+                    Console.WriteLine($"[{DateTime.Now:T}] User {createDto.ReceiverUserName} is offline.");
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[{DateTime.Now:T}] Error routing message: {ex.Message}");
+            }
+        }
+
         private static void Broadcast(string message, TcpClient sender)
         {
             var protocol = new ProtocolSI();
@@ -200,9 +264,17 @@ namespace MessageExchanger.Server
             {
                 foreach (var client in ConnectedClients)
                 {
+                    // Send to everyone EXCEPT the person who sent it
                     if (client != sender && client.Connected)
                     {
-                        client.GetStream().Write(packet, 0, packet.Length);
+                        try
+                        {
+                            client.GetStream().Write(packet, 0, packet.Length);
+                        }
+                        catch
+                        {
+                            // Ignore clients that disconnected ungracefully
+                        }
                     }
                 }
             }

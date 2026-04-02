@@ -142,6 +142,55 @@ namespace MessageExchanger.Server.Services
         {
             return _sessions.ContainsKey(client) && _sessions[client].Authenticated;
         }
+
+        public byte[] DecryptDataFromClient(TcpClient client, byte[] encryptedData)
+        {
+            var key = _sessions[client].SymmetricKey;
+
+            using var aes = Aes.Create();
+            aes.Key = key;
+            aes.IV = encryptedData.Take(16).ToArray();
+
+            using var decryptor = aes.CreateDecryptor();
+            var cipher = encryptedData.Skip(16).ToArray();
+
+            return decryptor.TransformFinalBlock(cipher, 0, cipher.Length);
+        }
+
+        public byte[] EncryptDataForClient(TcpClient client, byte[] plainData)
+        {
+            var key = _sessions[client].SymmetricKey;
+
+            using var aes = Aes.Create();
+            aes.Key = key;
+            aes.GenerateIV(); // Generate a fresh IV for every message
+
+            using var encryptor = aes.CreateEncryptor();
+            var cipher = encryptor.TransformFinalBlock(plainData, 0, plainData.Length);
+
+            // Prepend the IV to the ciphertext, just like the client expects
+            return aes.IV.Concat(cipher).ToArray();
+        }
+
+        public TcpClient? GetClientByUsername(string username)
+        {
+            // Find the first session where the user is authenticated and the username matches
+            var activeSession = _sessions.FirstOrDefault(s =>
+                s.Value.Authenticated &&
+                s.Value.Username.Equals(username, StringComparison.OrdinalIgnoreCase));
+
+            // Return the dictionary Key (the TcpClient), or null if not found
+            return activeSession.Key;
+        }
+
+        public string GetAuthenticatedUsername(TcpClient client)
+        {
+            if (_sessions.TryGetValue(client, out var session) && session.Authenticated)
+            {
+                return session.Username;
+            }
+            return string.Empty;
+        }
     }
 
     public class ClientSession

@@ -1,4 +1,5 @@
 ﻿using System.ComponentModel.DataAnnotations;
+using System.ComponentModel.DataAnnotations.Schema;
 
 namespace MessageExchanger.Server.Data.Entities
 {
@@ -21,6 +22,9 @@ namespace MessageExchanger.Server.Data.Entities
         public string? LastName { get; set; }
 
         // Relationships
-        public ICollection<Message>? MessagesSent { get; set; }
+        [InverseProperty("Sender")]
+        public virtual ICollection<Message>? MessagesSent { get; set; }
+        [InverseProperty("Receiver")]
+        public virtual ICollection<Message>? MessagesReceived { get; set; }
     }
 }

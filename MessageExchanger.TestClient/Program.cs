@@ -105,11 +105,93 @@ namespace MessageExchanger.TestClient
 
             // 6. Receive server response
             stream.Read(protocol.Buffer, 0, protocol.Buffer.Length);
+            string serverResponse = protocol.GetStringFromData();
             Console.WriteLine("Server says: " + protocol.GetStringFromData());
+
+            // ============================
+            //    CHAT LOOP
+            // ============================
+            if (serverResponse == "LOGIN_OK")
+            {
+                // Start listening for incoming messages in the background
+                Thread listener = new Thread(() => ListenForMessages(stream));
+                listener.Start();
+
+                while (true)
+                {
+                    Console.Write("\nTo User (or type 'exit'): ");
+                    string toUser = Console.ReadLine()!;
+                    if (toUser.ToLower() == "exit") break;
+
+                    Console.Write("Message: ");
+                    string messageText = Console.ReadLine()!;
+
+                    var chatMessage = new MessageCreateDTO
+                    {
+                        ReceiverUserName = toUser,
+                        Contents = messageText,
+                        Signature = SignData(messageText) // Sign the plaintext
+                    };
+
+                    byte[] encryptedMsg = EncryptWithAes(JsonSerializer.SerializeToUtf8Bytes(chatMessage));
+
+                    // Temporary Packet (tPacket)
+                    var tPacket = new ProtocolSI().Make(ProtocolSICmdType.SYM_CIPHER_DATA, encryptedMsg);
+                    stream.Write(tPacket, 0, tPacket.Length);
+                }
+            }
 
             var eotPacket = protocol.Make(ProtocolSICmdType.EOT);
             stream.Write(eotPacket, 0, eotPacket.Length);
             client.Close();
+        }
+
+        static string SignData(string data)
+        {
+            using var rsa = RSA.Create();
+            rsa.ImportParameters(_privateKey);
+            byte[] dataBytes = Encoding.UTF8.GetBytes(data);
+
+            // Hash the data and sign it
+            byte[] signatureBytes = rsa.SignData(dataBytes, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
+            return Convert.ToBase64String(signatureBytes);
+        }
+
+        static void ListenForMessages(NetworkStream stream)
+        {
+            var protocol = new ProtocolSI();
+            try
+            {
+                while (true)
+                {
+                    int bytes = stream.Read(protocol.Buffer, 0, protocol.Buffer.Length);
+                    if (bytes == 0) break;
+
+                    if (protocol.GetCmdType() == ProtocolSICmdType.SYM_CIPHER_DATA)
+                    {
+                        // Read the Base64 string
+                        string base64Payload = protocol.GetStringFromData().TrimEnd('\0');
+
+                        // Convert back to binary
+                        byte[] encryptedData = Convert.FromBase64String(base64Payload);
+
+                        // Decrypt normally
+                        byte[] decryptedBytes = DecryptWithAes(encryptedData);
+
+                        var incomingMsg = JsonSerializer.Deserialize<MessageDTO>(decryptedBytes);
+
+                        if (incomingMsg != null)
+                        {
+                            Console.WriteLine($"\n\n[New Message from {incomingMsg.SenderUserName} at {incomingMsg.SentAt.ToLocalTime():t}]: {incomingMsg.Contents}");
+                            Console.Write("To User (or type 'exit'): ");
+                        }
+                    }
+                }
+            }
+            catch
+            {
+                Console.WriteLine("\nDisconnected from server listening thread.");
+            }
         }
 
 
@@ -125,6 +207,21 @@ namespace MessageExchanger.TestClient
             using var rsa = RSA.Create();
             rsa.ImportParameters(_privateKey);
             return rsa.Decrypt(encrypted, RSAEncryptionPadding.Pkcs1);
+        }
+
+        static byte[] DecryptWithAes(byte[] cipherData)
+        {
+            using var aes = Aes.Create();
+            aes.Key = _symmetricKey;
+
+            // Extract the IV (first 16 bytes) and the CipherText (the rest)
+            byte[] iv = cipherData.Take(16).ToArray();
+            byte[] cipher = cipherData.Skip(16).ToArray();
+
+            aes.IV = iv;
+
+            using var decryptor = aes.CreateDecryptor();
+            return decryptor.TransformFinalBlock(cipher, 0, cipher.Length);
         }
 
         static byte[] EncryptWithAes(byte[] plain)

@@ -6,7 +6,7 @@
         public string Contents { get; set; } = string.Empty;
         public string Signature { get; set; } = string.Empty;
 
-        public Guid SenderId { get; set; }
+        public string SenderUserName { get; set; } = string.Empty;
         public DateTime SentAt { get; set; }
     }
 }
