@@ -166,7 +166,6 @@ namespace MessageExchanger.Server
                     switch (cmd)
                     {
                         case ProtocolSICmdType.PUBLIC_KEY:
-                            Logger.Log($"Received PUBLIC_KEY command from client. Processing key exchange...");
                             HandlePublicKey(client, protocol, stream);
                             break;
 
