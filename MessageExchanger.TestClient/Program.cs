@@ -16,7 +16,7 @@ namespace MessageExchanger.TestClient
         static byte[] _symmetricKey = Array.Empty<byte>();
         static string? targetUser;
 
-        static void Main()
+        static async void Main()
         {
             Console.WriteLine("Choose an option:");
             Console.WriteLine("1 - Login");
@@ -60,8 +60,10 @@ namespace MessageExchanger.TestClient
             byte[] packet = protocol.Make(ProtocolSICmdType.PUBLIC_KEY, publicKeyBytes);
             stream.Write(packet, 0, packet.Length);
 
+
             // 2. Receive SECRET_KEY
-            stream.Read(protocol.Buffer, 0, protocol.Buffer.Length);
+            await stream.ReadAsync(protocol.Buffer, 0, protocol.Buffer.Length);
+
             if (protocol.GetCmdType() == ProtocolSICmdType.SECRET_KEY)
             {
                 byte[] encryptedKey = protocol.GetData();
