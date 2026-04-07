@@ -5,7 +5,7 @@ namespace MessageExchanger.Server.Services
 {
     public static class EncryptionService
     {
-        private static byte[] _masterKey = null!;
+        private static byte[] _masterKey = new byte[16];
 
         public static void Initialize(string base64Key)
         {

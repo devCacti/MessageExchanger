@@ -12,8 +12,8 @@ using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 namespace MessageExchanger.Server.Migrations
 {
     [DbContext(typeof(AppDbContext))]
-    [Migration("20260402191846_Updated_User_And_Message_Structures")]
-    partial class Updated_User_And_Message_Structures
+    [Migration("20260407144641_Init")]
+    partial class Init
     {
         /// <inheritdoc />
         protected override void BuildTargetModel(ModelBuilder modelBuilder)
@@ -35,10 +35,10 @@ namespace MessageExchanger.Server.Migrations
                         .IsRequired()
                         .HasColumnType("nvarchar(max)");
 
-                    b.Property<Guid?>("ReceiverId")
+                    b.Property<Guid>("ReceiverId")
                         .HasColumnType("uniqueidentifier");
 
-                    b.Property<Guid?>("SenderId")
+                    b.Property<Guid>("SenderId")
                         .HasColumnType("uniqueidentifier");
 
                     b.Property<DateTime>("SentAt")
@@ -90,11 +90,15 @@ namespace MessageExchanger.Server.Migrations
                 {
                     b.HasOne("MessageExchanger.Server.Data.Entities.User", "Receiver")
                         .WithMany("MessagesReceived")
-                        .HasForeignKey("ReceiverId");
+                        .HasForeignKey("ReceiverId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
 
                     b.HasOne("MessageExchanger.Server.Data.Entities.User", "Sender")
                         .WithMany("MessagesSent")
-                        .HasForeignKey("SenderId");
+                        .HasForeignKey("SenderId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
 
                     b.Navigation("Receiver");
 

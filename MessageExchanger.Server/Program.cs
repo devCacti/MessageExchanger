@@ -1,6 +1,6 @@
 ﻿using System.Net;
 using System.Net.Sockets;
-using EI.SI;
+using EI.SI; // ProtocolIP
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using MessageExchanger.Server.Data;
@@ -261,7 +261,6 @@ namespace MessageExchanger.Server
                 {
                     SenderUserName = senderUsername,
                     Contents = createDto.Contents,
-                    Signature = createDto.Signature,
                     SentAt = DateTime.UtcNow
                 };
 

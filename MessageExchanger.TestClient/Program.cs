@@ -14,6 +14,7 @@ namespace MessageExchanger.TestClient
         static RSAParameters _privateKey;
         static RSAParameters _publicKey;
         static byte[] _symmetricKey = Array.Empty<byte>();
+        static string? targetUser;
 
         static void Main()
         {
@@ -124,13 +125,13 @@ namespace MessageExchanger.TestClient
                     Console.WriteLine($"Logged in as: {username}");
                     Console.WriteLine("-------------------------------------------");
                     Console.Write("Enter username to chat with (or 'exit' to quit): ");
-                    string targetUser = Console.ReadLine()!;
+                    targetUser = Console.ReadLine()!;
 
                     if (targetUser.ToLower() == "exit") break;
                     if (string.IsNullOrWhiteSpace(targetUser)) continue;
 
                     // 2. Enter the specific Chat Room
-                    RunChatRoom(stream, targetUser);
+                    RunChatRoom(stream);
                 }
             }
 
@@ -139,7 +140,7 @@ namespace MessageExchanger.TestClient
             client.Close();
         }
 
-        static void RunChatRoom(NetworkStream stream, string targetUser)
+        static void RunChatRoom(NetworkStream stream)
         {
             Console.WriteLine($"\n>>> Chatting with {targetUser} <<<");
             Console.WriteLine(">>> Type '/back' to change user <<<");
@@ -151,11 +152,15 @@ namespace MessageExchanger.TestClient
                 string messageText = Console.ReadLine()!;
 
                 if (string.IsNullOrWhiteSpace(messageText)) continue;
-                if (messageText.ToLower() == "/back") break;
+                if (messageText.ToLower() == "/back")
+                {
+                    targetUser = null!;
+                    break;
+                }
 
                 var chatMessage = new MessageCreateDTO
                 {
-                    ReceiverUserName = targetUser,
+                    ReceiverUserName = targetUser!,
                     Contents = messageText,
                     Signature = SignData(messageText)
                 };
@@ -203,7 +208,7 @@ namespace MessageExchanger.TestClient
                     {
                         // IT'S A LIVE MESSAGE - Append to bottom
                         var incomingMsg = JsonSerializer.Deserialize<MessageDTO>(decryptedBytes);
-                        if (incomingMsg != null)
+                        if (incomingMsg != null && incomingMsg.SenderUserName == targetUser)
                         {
                             // \r clears the current "Me: " line before printing the new message
                             Console.Write($"\r[{incomingMsg.SentAt.ToLocalTime():HH:mm}] {incomingMsg.SenderUserName}: {incomingMsg.Contents}\nMe: ");

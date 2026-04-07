@@ -12,7 +12,7 @@ namespace MessageExchanger.Server.Data.Entities
         [Required]
         public string UserName { get; set; } = string.Empty;
 
-        // This password system will use MD5 Hashing
+        // This password system will use ~MD5 Hashing~ -> BCrypt
         [Required]
         public string Password { get; set; } = string.Empty;
         [Required]
@@ -22,7 +22,7 @@ namespace MessageExchanger.Server.Data.Entities
         public string? LastName { get; set; }
 
         // Relationships
-        [InverseProperty("Sender")]
+        [InverseProperty("Sender")] // Para o EFCore saber qual é a correspondencia
         public virtual ICollection<Message>? MessagesSent { get; set; }
         [InverseProperty("Receiver")]
         public virtual ICollection<Message>? MessagesReceived { get; set; }

@@ -11,8 +11,11 @@ namespace MessageExchanger.Server.Data.Entities
         public string Contents { get; set; } = string.Empty;
         public string Signature { get; set; } = string.Empty;
 
-        public User? Sender { get; set; }
-        public User? Receiver { get; set; }
+        public Guid SenderId { get; set; }
+        public User Sender { get; set; } = null!;
+
+        public Guid ReceiverId { get; set; }
+        public User Receiver { get; set; } = null!;
 
         public DateTime SentAt { get; set; }
     }

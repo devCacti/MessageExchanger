@@ -1,11 +1,11 @@
-﻿using System.Security.Cryptography;
+﻿using Azure.Core;
 using MessageExchanger.Server.Data;
 using MessageExchanger.Server.Data.Entities;
 using MessageExchanger.Shared.DTOs;
-using System.Text.Json;
 using System.Net.Sockets;
-using MessageExchanger.Server.Utils;
+using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 
 namespace MessageExchanger.Server.Services
 {
@@ -100,17 +100,17 @@ namespace MessageExchanger.Server.Services
             if (_db.Users.Any(u => u.UserName == dto.UserName))
                 return false;
 
-            // 2. Generate random salt
-            string salt = SecurityUtils.GenerateSalt(); // or implement below
 
-            // 3. Hash password + salt with MD5
-            string hash = SecurityUtils.Md5Hash(dto.Password + salt); // or implement below
+
+            // 2. Generate random salt
+            string salt = BCrypt.Net.BCrypt.GenerateSalt(12);
+            string passwordHash = BCrypt.Net.BCrypt.HashPassword(dto.Password, salt);
 
             // 4. Create user entity
             var user = new User
             {
                 UserName = dto.UserName,
-                Password = hash,
+                Password = passwordHash,
                 Salt = salt,
                 FirstName = dto.FirstName,
                 LastName = dto.LastName
@@ -128,7 +128,7 @@ namespace MessageExchanger.Server.Services
             var user = _db.Users.FirstOrDefault(u => u.UserName == dto.UserName);
             if (user == null) return false;
 
-            string computedHash = SecurityUtils.Md5Hash(dto.Password + user.Salt);
+            string computedHash = BCrypt.Net.BCrypt.HashPassword(dto.Password, user.Salt);
             return computedHash == user.Password;
         }
 
